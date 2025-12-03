@@ -43,18 +43,21 @@ fn main() {
         let turn = Turn::from(line);
         let zero_count_delta = get_zero_count_delta(location, &turn);
         zero_count += zero_count_delta;
+        let old_location = location;
         location = get_new_location(location, &turn);
+        println!("turn: {:?}, old_location: {}, location: {}, zero_count_delta: {}, zero_count: {}", turn, old_location, location, zero_count_delta , zero_count);
     }
     println!("zero_count: {}", zero_count);
 }
 
 fn get_zero_count_delta(location: i32, turn: &Turn) -> i32 {
+    let extra_zero_count = if location == 0 { 0 } else { 1 };
     let count = match turn.direction {
         Direction::Left  if turn.distance < location => 0,
         Direction::Left => {
             let distance = turn.distance - location;
             let count = distance / 100;
-            count + 1
+            count + extra_zero_count
         }
         Direction::Right if turn.distance < (100 - location) => 0,
         Direction::Right => {
