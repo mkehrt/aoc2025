@@ -150,7 +150,6 @@ fn main() {
         .map(|line| line.unwrap())
         .collect::<Vec<String>>();
     let mut positions = Vec::new();
-    // OFF BY ONE???
     let iterations = if lines.len() <= 20 { 10 } else { 1000 };
     for line in lines {
         let position = Position::from_str(&line).unwrap();
@@ -159,8 +158,9 @@ fn main() {
     let mut union = union_find::UnionFind::new(positions);
     println!("union find: {:?}", union);
 
+    let mut min_distance = 0.0;
     for _ in 0..iterations {
-        union_closest_boxes(&mut union);
+        min_distance = union_closest_boxes(&mut union, min_distance);
         println!("union find: {:?}", union);
     }
     let sorted_heads = union.sorted_heads();
@@ -177,7 +177,7 @@ fn main() {
     println!("product: {}", product);
 }
 
-fn union_closest_boxes(union: &mut union_find::UnionFind<Position>) {
+fn union_closest_boxes(union: &mut union_find::UnionFind<Position>, min_distance: f64) -> f64{
     let mut closest_distance = None;
     let mut closest_index1 = None;
     let mut closest_index2 = None;
@@ -186,10 +186,6 @@ fn union_closest_boxes(union: &mut union_find::UnionFind<Position>) {
         for j in i + 1..union.size() {
             let element1 = union.get(i).unwrap().clone();
             let element2 = union.get(j).unwrap().clone();
-
-            if union.find(i) == union.find(j) {
-                continue;
-            }
 
             let position1 = element1.data;
             let position2 = element2.data;
@@ -201,6 +197,9 @@ fn union_closest_boxes(union: &mut union_find::UnionFind<Position>) {
                 }
                 Some(old_distance) => {
                     let distance = position1.distance(&position2);
+                    if distance <= min_distance {
+                        continue;
+                    }
                     if distance < old_distance {
                         closest_distance = Some(distance);
                         closest_index1 = Some(i);
@@ -210,5 +209,12 @@ fn union_closest_boxes(union: &mut union_find::UnionFind<Position>) {
             }
         }
     }
-    union.union(closest_index1.unwrap(), closest_index2.unwrap());
+
+    let head1 = union.find(closest_index1.unwrap());
+    let head2 = union.find(closest_index2.unwrap());
+    if head1 != head2 {
+        union.union(closest_index1.unwrap(), closest_index2.unwrap());
+    }
+
+    closest_distance.unwrap()
 }
