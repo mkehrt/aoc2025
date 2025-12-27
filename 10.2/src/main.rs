@@ -1,6 +1,5 @@
-use std::str::FromStr;
 use std::collections::HashSet;
-use std::time::Instant;
+use std::str::FromStr;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Indicator {
@@ -47,80 +46,57 @@ impl FromStr for Indicators {
     }
 }
 
-impl Indicators {
-    fn apply_buttons(&self, buttons: &Buttons) -> Self {
-        let mut indicators = self.indicators.clone();
-        for button in &buttons.buttons {
-            let index = *button as usize;
-            indicators[index] = indicators[index].toggle();
-        }
-        Indicators { indicators }
-    }
-
-    fn len(&self) -> usize {
-        self.indicators.len()
-    }
-}
-
 #[derive(Clone, Debug)]
-struct Buttons {
-    pub buttons: Vec<u64>,
+struct ButtonCounterIndices {
+    pub inner: Vec<usize>,
 }
 
-impl FromStr for Buttons {
+impl FromStr for ButtonCounterIndices {
     type Err = anyhow::Error;
     fn from_str(delimed_str: &str) -> Result<Self, Self::Err> {
         let str = &delimed_str[1..delimed_str.len() - 1];
         let parts = str.split(",").collect::<Vec<&str>>();
-        let mut buttons = Vec::new();
+        let mut button_counter_indices = Vec::new();
         for part in parts {
-            let button = part.parse::<u64>()?;
-            buttons.push(button);
+            let button = part.parse::<usize>()?;
+            button_counter_indices.push(button);
         }
-        Ok(Buttons { buttons })
+        Ok(ButtonCounterIndices {
+            inner: button_counter_indices,
+        })
     }
 }
-
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct Joltages {
-    pub joltages: Vec<u64>,
+struct JoltageCounters {
+    pub desired: Vec<u64>,
 }
 
-impl FromStr for Joltages {
+impl FromStr for JoltageCounters {
     type Err = anyhow::Error;
     fn from_str(delimed_str: &str) -> Result<Self, Self::Err> {
         let str = &delimed_str[1..delimed_str.len() - 1];
         let parts = str.split(",").collect::<Vec<&str>>();
-        let mut joltages = Vec::new();
+        let mut desired = Vec::new();
         for part in parts {
             let joltage = part.parse::<u64>()?;
-            joltages.push(joltage);
+            desired.push(joltage);
         }
-        Ok(Joltages { joltages })
+        Ok(JoltageCounters { desired })
     }
 }
 
-impl Joltages {
-    fn apply_buttons(&self, buttons: &Buttons) -> Self {
-        let mut joltages = self.joltages.clone();
-        for button in &buttons.buttons {
-            let index = *button as usize;
-            joltages[index] = joltages[index] + 1;
-        }
-        Joltages { joltages }
-    }
-
+impl JoltageCounters {
     fn len(&self) -> usize {
-        self.joltages.len()
+        self.desired.len()
     }
 }
 
 #[derive(Clone, Debug)]
 struct Machine {
-    indicators: Indicators,
-    buttonses: Vec<Buttons>,
-    joltages: Joltages,
+    _indicators: Indicators,
+    buttons: Vec<ButtonCounterIndices>,
+    joltages_counters: JoltageCounters,
 }
 
 impl FromStr for Machine {
@@ -128,95 +104,219 @@ impl FromStr for Machine {
     fn from_str(delimed_str: &str) -> Result<Self, Self::Err> {
         let parts = delimed_str.split(" ").collect::<Vec<&str>>();
         let indicators = Indicators::from_str(parts[0])?;
-        let mut buttonses = Vec::new();
+        let mut buttons = Vec::new();
         for part in &parts[1..parts.len() - 1] {
-            let buttons = Buttons::from_str(part)?;
-            buttonses.push(buttons);
+            let button = ButtonCounterIndices::from_str(part)?;
+            buttons.push(button);
         }
-        let joltages = Joltages::from_str(parts[parts.len() - 1])?;
-        Ok(Machine { indicators, buttonses, joltages })
+        let joltages_counters = JoltageCounters::from_str(parts[parts.len() - 1])?;
+        Ok(Machine {
+            _indicators: indicators,
+            buttons,
+            joltages_counters,
+        })
     }
 }
 
-fn steps_to_desired_state(machine: &Machine) -> u64 {
-    let indicator_count = machine.indicators.len();
-    let mut indicators_vec = Vec::new();
-    for _ in 0..indicator_count {
-        indicators_vec.push(Indicator::Off);
-    }
-    let indicators = Indicators { indicators: indicators_vec };
-    if indicators == machine.indicators {
-        return 0;
-    }
-    let mut current_indicatorses = vec![indicators];
-    let mut step_count = 0;
-    loop {
-        step_count += 1;
-        let mut next_indicatorses = Vec::new();
-        for indicators in current_indicatorses {
-            for buttons in &machine.buttonses {
-                let next_indicators = indicators.apply_buttons(&buttons);
-                if next_indicators == machine.indicators {
-                    return step_count;
+struct JoltageAndButtonIndices {
+    desired_joltage: u64,
+    button_indices: Vec<usize>,
+}
+
+fn get_joltages_and_button_push_indiceses(machine: &Machine) -> Vec<JoltageAndButtonIndices> {
+    let mut joltage_and_button_indices = Vec::new();
+    for (joltage_index, desired_joltage) in machine.joltages_counters.desired.iter().enumerate() {
+        let mut button_indices = Vec::new();
+        for (button_index, button_counter_indices) in machine.buttons.iter().enumerate() {
+            for button_counter_index in button_counter_indices.inner.iter() {
+                if *button_counter_index == joltage_index {
+                    button_indices.push(button_index);
+                    break;
                 }
-                next_indicatorses.push(next_indicators);
             }
         }
-        println!("step count: {}, size: {}", step_count, next_indicatorses.len());
-        current_indicatorses = next_indicatorses;
+        joltage_and_button_indices.push(JoltageAndButtonIndices {
+            desired_joltage: *desired_joltage,
+            button_indices,
+        });
+    }
+    joltage_and_button_indices
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ButtonPushCount {
+    button_index: usize,
+    count: Option<u64>,
+}
+
+#[derive(Debug, Eq, Hash, PartialEq)]
+struct ButtonPushCounts {
+    inner: Vec<ButtonPushCount>,
+}
+
+impl ButtonPushCounts {
+    fn new_for_size(size: usize) -> Self {
+        let mut inner = Vec::new();
+        for i in 0..size {
+            inner.push(ButtonPushCount {
+                button_index: i,
+                count: None,
+            });
+        }
+        ButtonPushCounts { inner }
     }
 }
 
-fn total_steps_to_desired_state(machines: &[Machine]) -> u64 {
-    let mut total_steps = 0;
-    for machine in machines {
-        total_steps += steps_to_desired_state(machine);
+impl Clone for ButtonPushCounts {
+    fn clone(&self) -> Self {
+        let mut new_button_push_counts = Vec::new();
+        for button_push_count in &self.inner {
+            new_button_push_counts.push(button_push_count.clone());
+        }
+        ButtonPushCounts {
+            inner: new_button_push_counts,
+        }
+    }
+}
+impl ButtonPushCounts {
+    fn total(&self) -> u64 {
+        let mut total = 0;
+        for button_push_count in &self.inner {
+            total += button_push_count.count.unwrap_or(0);
+        }
+        total
+    }
+
+    fn union(&self, other: &ButtonPushCounts) -> Option<ButtonPushCounts> {
+        assert!(self.inner.len() == other.inner.len());
+        let mut new_button_push_counts = Vec::new();
+        for i in 0..self.inner.len() {
+            let button_push_count;
+            match (self.inner[i].count, other.inner[i].count) {
+                (Some(count_self), Some(count_other)) if count_self == count_other => {
+                    button_push_count = ButtonPushCount {
+                        button_index: i,
+                        count: Some(count_self),
+                    };
+                }
+                (Some(_count_self), Some(_count_other)) => {
+                    return None;
+                }
+                (Some(count_self), None) => {
+                    button_push_count = ButtonPushCount {
+                        button_index: i,
+                        count: Some(count_self),
+                    };
+                }
+                (None, Some(count_other)) => {
+                    button_push_count = ButtonPushCount {
+                        button_index: i,
+                        count: Some(count_other),
+                    };
+                }
+                (None, None) => {
+                    button_push_count = ButtonPushCount {
+                        button_index: i,
+                        count: None,
+                    };
+                }
+            }
+            new_button_push_counts.push(button_push_count);
+        }
+        Some(ButtonPushCounts {
+            inner: new_button_push_counts,
+        })
+    }
+}
+
+fn reify_button_push_counts_for_one_joltage(
+    button_count: usize,
+    desired_joltage: u64,
+    button_indices_for_joltage: &Vec<usize>,
+) -> Vec<ButtonPushCounts> {
+    let button_push_counts = ButtonPushCounts::new_for_size(button_count);
+    let initial_button_index = 0;
+    reify_button_push_counts_for_one_joltage_inner(
+        button_push_counts,
+        desired_joltage,
+        button_indices_for_joltage,
+        initial_button_index,
+    )
+}
+
+fn reify_button_push_counts_for_one_joltage_inner(
+    mut button_push_counts: ButtonPushCounts,
+    desired_joltage: u64,
+    button_indices_for_joltage: &Vec<usize>,
+    current_button_index: usize,
+) -> Vec<ButtonPushCounts> {
+    let total_joltage = button_push_counts.total();
+    assert!(total_joltage <= desired_joltage);
+    if current_button_index == button_indices_for_joltage.len() - 1 {
+        let remaining_joltage = desired_joltage - total_joltage;
+        let button_index = button_indices_for_joltage[current_button_index];
+        button_push_counts.inner[button_index].count = Some(remaining_joltage);
+        assert!(button_push_counts.total() == desired_joltage);
+        return vec![button_push_counts];
+    }
+    let mut button_push_countses = Vec::new();
+    for count in total_joltage..desired_joltage + 1 {
+        let new_button_push_counts = button_push_counts.clone();
+        let button_index = button_indices_for_joltage[current_button_index];
+        button_push_counts.inner[button_index].count = Some(count);
+        let new_button_push_countses = reify_button_push_counts_for_one_joltage_inner(
+            new_button_push_counts,
+            desired_joltage,
+            button_indices_for_joltage,
+            current_button_index + 1,
+        );
+        button_push_countses.extend(new_button_push_countses);
+    }
+    button_push_countses
+}
+
+fn get_all_button_push_counts(machine: &Machine) -> HashSet<ButtonPushCounts> {
+    let joltages_and_button_indiceses = get_joltages_and_button_push_indiceses(machine);
+    let mut current_button_push_countses: HashSet<ButtonPushCounts> = HashSet::new();
+    for joltage_and_button_indices in joltages_and_button_indiceses {
+        let button_count = machine.buttons.len();
+        let desired_joltage = joltage_and_button_indices.desired_joltage;
+        let button_indices_for_joltage = joltage_and_button_indices.button_indices;
+        let new_button_push_countses = reify_button_push_counts_for_one_joltage(
+            button_count,
+            desired_joltage,
+            &button_indices_for_joltage,
+        );
+        let mut replacement_button_push_countses = HashSet::new();
+        for current_button_push_counts in current_button_push_countses.iter() {
+            for new_button_push_counts in new_button_push_countses.iter() {
+                let union = current_button_push_counts.union(&new_button_push_counts);
+                if let Some(union) = union {
+                    replacement_button_push_countses.insert(union);
+                }
+            }
+        }
+        current_button_push_countses = replacement_button_push_countses;
+    }
+    current_button_push_countses
+}
+
+fn steps_to_desired_joltages(machine: &Machine) -> u64 {
+    let all_button_push_counts = get_all_button_push_counts(machine);
+    let mut total_steps = u64::MAX;
+    for min_button_push_counts in all_button_push_counts {
+        let new_total_steps = min_button_push_counts.total();
+        if total_steps < new_total_steps {
+            total_steps = new_total_steps;
+        }
     }
     total_steps
 }
 
-fn steps_to_desired_joltage(machine_index: usize, machine: &Machine) -> u64 {
-    let joltage_count = machine.joltages.len();
-    let mut joltages_vec = Vec::new();
-    for _ in 0..joltage_count {
-        joltages_vec.push(0);
-    }
-    let joltages = Joltages { joltages: joltages_vec };
-    if joltages == machine.joltages {
-        return 0;
-    }
-    let max_joltage = machine.joltages.joltages.iter().max().unwrap();
-    let mut current_joltageses = HashSet::new();
-    current_joltageses.insert(joltages);
-    let mut step_count = 0;
-    loop {
-        let start_time = Instant::now();
-        step_count += 1;
-        let mut next_joltageses = HashSet::new();
-        'joltages_loop: for joltages in current_joltageses {
-            for buttons in &machine.buttonses {
-                let next_joltages = joltages.apply_buttons(&buttons);
-                if next_joltages == machine.joltages {
-                    return step_count;
-                }
-                for j in 0..joltage_count {
-                    if next_joltages.joltages[j] > machine.joltages.joltages[j] {
-                        continue 'joltages_loop;
-                    }
-                }
-                next_joltageses.insert(next_joltages);
-            }
-        }
-        let duration = start_time.elapsed();
-        println!("{:?} (max joltage: {})/{}: step count: {}, size: {}", duration, max_joltage, machine_index, step_count, next_joltageses.len());
-        current_joltageses = next_joltageses;
-    }
-}
-
 fn total_steps_to_desired_joltages(machines: &[Machine]) -> u64 {
     let mut total_steps = 0;
-    for (machine_index, machine) in machines.iter().enumerate() {
-        total_steps += steps_to_desired_joltage(machine_index, machine);
+    for machine in machines {
+        total_steps += steps_to_desired_joltages(machine);
     }
     total_steps
 }
