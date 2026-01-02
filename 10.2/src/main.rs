@@ -197,6 +197,7 @@ impl ButtonPushCounts {
 }
 
 fn get_button_push_counts_total(
+    machine_index: usize,
     button_count: usize,
     joltages_buttons_indiceses: &Vec<JoltageAndButtonIndices>,
 ) -> u64 {
@@ -205,17 +206,19 @@ fn get_button_push_counts_total(
     let initial_joltage_index = 0;
     let joltage_count = joltages_buttons_indiceses.len();
     get_button_push_counts_total_inner(
+        machine_index,
         button_push_counts,
         joltages_buttons_indiceses,
         0,
         joltage_count,
         initial_joltage_index,
         initial_button_index,
+        &mut 0,
     )
     .unwrap()
 }
 
-fn log_stuff(current_joltage_index: usize, joltage_count: usize, start_time: Instant) {
+fn log_stuff(machine_index: usize, current_joltage_index: usize, joltage_count: usize, start_time: Instant, attempts: &mut u64) {
     if joltage_count - current_joltage_index >= LOGGING_GRANULARITY {
         let end_time = Instant::now();
         let duration = end_time.duration_since(start_time);
@@ -224,33 +227,37 @@ fn log_stuff(current_joltage_index: usize, joltage_count: usize, start_time: Ins
                 print!("  ");
             }
             println!(
-                "current_joltage_index: {}, duration: {:?}",
-                current_joltage_index, duration
+                "machine_index: {}, current_joltage_index: {}, duration: {:?}, attempts: {}",
+                machine_index,
+                current_joltage_index, duration, attempts
             );
         }
     }
 }
 
 fn get_button_push_counts_total_inner(
+    machine_index: usize,
     button_push_counts: ButtonPushCounts,
     joltages_buttons_indiceses: &Vec<JoltageAndButtonIndices>,
     total_joltage_for_counter: u64,
     joltage_count: usize,
     current_joltage_index: usize,
     current_button_index: usize,
+    attempts: &mut u64,
 ) -> Option<u64> {
     let start_time = Instant::now();
+
     let desired_joltage = joltages_buttons_indiceses[current_joltage_index].desired_joltage;
     let button_indices_for_joltage = joltages_buttons_indiceses[current_joltage_index]
         .button_indices
         .clone();
+    let button_index = button_indices_for_joltage[current_button_index];
     // println!("current_joltage_index: {}, current_button_index: {}, desired_joltage: {}, button_indices_for_joltage: {:?}", current_joltage_index, current_button_index, desired_joltage, button_indices_for_joltage);
     // println!("button push counts: {:?}", button_push_counts);
 
     if current_button_index == button_indices_for_joltage.len() - 1 {
         let mut new_button_push_counts = button_push_counts.clone();
         let remaining_joltage = desired_joltage - total_joltage_for_counter;
-        let button_index = button_indices_for_joltage[current_button_index];
         //println!(
         //    "distributing remaining joltage: {} to button: {}, old count: {:?}",
         //    remaining_joltage, button_index, new_button_push_counts.inner[button_index].count
@@ -258,7 +265,8 @@ fn get_button_push_counts_total_inner(
         if let Some(old_count) = new_button_push_counts.inner[button_index].count {
             if old_count != remaining_joltage {
                 // println!("failed");
-                log_stuff(current_joltage_index, joltage_count, start_time);
+                *attempts += 1;
+                log_stuff(machine_index, current_joltage_index, joltage_count, start_time, attempts);
                 return None;
             }
             // println!("succeeded with exisiting count");
@@ -273,61 +281,84 @@ fn get_button_push_counts_total_inner(
             //     new_button_push_counts.total()
             // );
 
-            log_stuff(current_joltage_index, joltage_count, start_time);
+            *attempts += 1;
+            log_stuff(machine_index, current_joltage_index, joltage_count, start_time, attempts);
             return Some(new_button_push_counts.total());
         }
         let new_button_push_counts_total = get_button_push_counts_total_inner(
+            machine_index,
             new_button_push_counts,
             joltages_buttons_indiceses,
             0,
             joltage_count,
             current_joltage_index + 1,
             0,
+            attempts,
         );
-        log_stuff(current_joltage_index, joltage_count, start_time);
+        *attempts += 1;
+        log_stuff(machine_index, current_joltage_index, joltage_count, start_time, attempts);
         return new_button_push_counts_total;
     }
-    for new_total_joltage in total_joltage_for_counter..desired_joltage + 1 {
-        let new_count = new_total_joltage - total_joltage_for_counter;
-        let mut new_button_push_counts = button_push_counts.clone();
-        let button_index = button_indices_for_joltage[current_button_index];
-        if let Some(old_count) = new_button_push_counts.inner[button_index].count {
-            if old_count != new_count {
-                // This can be optimized by skipping this for loop in this case and just using the existing count if it's valid.
-                continue;
-            }
+    if let Some(old_count) = button_push_counts.inner[button_index].count {
+        let new_total_joltage_for_counter = total_joltage_for_counter + old_count;
+        if new_total_joltage_for_counter > desired_joltage {
+            *attempts += 1;
+            log_stuff(machine_index, current_joltage_index, joltage_count, start_time, attempts);
+            return None;
         }
-        new_button_push_counts.inner[button_index].count = Some(new_count);
         let new_min_button_push_counts_total = get_button_push_counts_total_inner(
-            new_button_push_counts,
+            machine_index,
+            button_push_counts,
             joltages_buttons_indiceses,
-            new_total_joltage,
+            new_total_joltage_for_counter,
             joltage_count,
             current_joltage_index,
             current_button_index + 1,
+            attempts,
         );
-        if let Some(new_min_button_push_counts_total) = new_min_button_push_counts_total {
-            log_stuff(current_joltage_index, joltage_count, start_time);
-            return Some(new_min_button_push_counts_total);
+        *attempts += 1;
+        log_stuff(machine_index, current_joltage_index, joltage_count, start_time, attempts);
+        return new_min_button_push_counts_total;
+    } else {
+        for new_total_joltage in total_joltage_for_counter..desired_joltage + 1 {
+            let new_count = new_total_joltage - total_joltage_for_counter;
+            let mut new_button_push_counts = button_push_counts.clone();
+            new_button_push_counts.inner[button_index].count = Some(new_count);
+            let new_min_button_push_counts_total = get_button_push_counts_total_inner(
+                machine_index,
+                new_button_push_counts,
+                joltages_buttons_indiceses,
+                new_total_joltage,
+                joltage_count,
+                current_joltage_index,
+                current_button_index + 1,
+                attempts,
+            );
+            if let Some(new_min_button_push_counts_total) = new_min_button_push_counts_total {
+                *attempts += 1;
+                log_stuff(machine_index, current_joltage_index, joltage_count, start_time, attempts);
+                return Some(new_min_button_push_counts_total);
+            }
+            /*   match (
+                min_button_push_counts_total,
+                new_min_button_push_counts_total,
+            ) {
+                (Some(min), Some(new_min)) => {
+                    min_button_push_counts_total = Some(min.min(new_min));
+                }
+                (None, Some(new_min)) => {
+                    min_button_push_counts_total = Some(new_min);
+                }
+                _ => {}
+            } */
         }
-        /*   match (
-            min_button_push_counts_total,
-            new_min_button_push_counts_total,
-        ) {
-            (Some(min), Some(new_min)) => {
-                min_button_push_counts_total = Some(min.min(new_min));
-            }
-            (None, Some(new_min)) => {
-                min_button_push_counts_total = Some(new_min);
-            }
-            _ => {}
-        } */
     }
-    log_stuff(current_joltage_index, joltage_count, start_time);
+    *attempts += 1;
+    log_stuff(machine_index, current_joltage_index, joltage_count, start_time, attempts);
     None
 }
 
-fn steps_to_desired_joltages(machine: &Machine) -> u64 {
+fn steps_to_desired_joltages(machine_index: usize, machine: &Machine) -> u64 {
     let joltages_and_button_indiceses = get_joltages_and_button_push_indiceses(machine);
     // println!(
     //     "joltages_and_button_indiceses: {:?}",
@@ -335,7 +366,7 @@ fn steps_to_desired_joltages(machine: &Machine) -> u64 {
     // );
     let button_count = machine.buttons.len();
     let all_button_push_counts =
-        get_button_push_counts_total(button_count, &joltages_and_button_indiceses);
+        get_button_push_counts_total(machine_index, button_count, &joltages_and_button_indiceses);
     all_button_push_counts
 }
 
@@ -347,7 +378,7 @@ fn total_steps_to_desired_joltages(machines: &[Machine]) -> u64 {
             index
         );
         println!("machine: {:?}", machine);
-        let steps = steps_to_desired_joltages(machine);
+        let steps = steps_to_desired_joltages(index, machine);
         println!("steps: {}", steps);
         total_steps += steps;
     }
