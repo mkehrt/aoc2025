@@ -94,6 +94,7 @@ impl FromStr for Machine {
             let button = ButtonCounterIndices::from_str(part)?;
             buttons.push(button);
         }
+        buttons.sort_by_key(|button| button.inner.len());
         let joltages_counters = JoltageCounters::from_str(parts[parts.len() - 1])?;
         Ok(Machine {
             _indicators: indicators,
@@ -202,6 +203,7 @@ fn get_button_push_counts_total(
     get_button_push_counts_total_inner(
         vec![button_push_counts],
         joltages_buttons_indiceses,
+        0,
         initial_joltage_index,
         initial_button_index,
     )
@@ -211,6 +213,7 @@ fn get_button_push_counts_total(
 fn get_button_push_counts_total_inner(
     button_push_counts_trace: Vec<ButtonPushCounts>,
     joltages_buttons_indiceses: &Vec<JoltageAndButtonIndices>,
+    total_joltage_for_counter: u64,
     current_joltage_index: usize,
     current_button_index: usize,
 ) -> Option<u64> {
@@ -220,16 +223,21 @@ fn get_button_push_counts_total_inner(
         .clone();
     println!("current_joltage_index: {}, current_button_index: {}, desired_joltage: {}, button_indices_for_joltage: {:?}", current_joltage_index, current_button_index, desired_joltage, button_indices_for_joltage);
     println!("button push counts: {:?}", button_push_counts_trace.last().unwrap());
-    let total_joltage = button_push_counts_trace.last().unwrap().total();
 
     if current_button_index == button_indices_for_joltage.len() - 1 {
         let mut new_button_push_counts = button_push_counts_trace.last().unwrap().clone();
-        let remaining_joltage = desired_joltage - total_joltage;
+        let remaining_joltage = desired_joltage - total_joltage_for_counter;
         let button_index = button_indices_for_joltage[current_button_index];
+        println!("distributing remaining joltage: {} to button: {}, old count: {:?}", remaining_joltage, button_index, new_button_push_counts.inner[button_index].count);
         if let Some(old_count) = new_button_push_counts.inner[button_index].count {
             if old_count != remaining_joltage {
+                println!("failed");
                 return None;
             }
+            println!("succeeded with exisiting count");
+        }
+        else {
+            println!("succeeded with new count");
         }
         new_button_push_counts.inner[button_index].count = Some(remaining_joltage);
         if current_joltage_index == joltages_buttons_indiceses.len() - 1 {
@@ -244,14 +252,15 @@ fn get_button_push_counts_total_inner(
         let new_button_push_counts_total = get_button_push_counts_total_inner(
             new_button_push_counts_trace,
             joltages_buttons_indiceses,
+            0,
             current_joltage_index + 1,
             0,
         );
         return new_button_push_counts_total;
     }
     let mut min_button_push_counts_total: Option<u64> = None;
-    for new_total_joltage in total_joltage..desired_joltage + 1 {
-        let new_count = new_total_joltage - total_joltage;
+    for new_total_joltage in total_joltage_for_counter..desired_joltage + 1 {
+        let new_count = new_total_joltage - total_joltage_for_counter;
         let mut new_button_push_counts = button_push_counts_trace.last().unwrap().clone();
         let button_index = button_indices_for_joltage[current_button_index];
         if let Some(old_count) = new_button_push_counts.inner[button_index].count {
@@ -266,10 +275,14 @@ fn get_button_push_counts_total_inner(
         let new_min_button_push_counts_total = get_button_push_counts_total_inner(
             new_button_push_counts_trace,
             joltages_buttons_indiceses,
+            new_total_joltage,
             current_joltage_index,
             current_button_index + 1,
         );
-        match (
+        if let Some(new_min_button_push_counts_total) = new_min_button_push_counts_total {
+            return Some(new_min_button_push_counts_total);
+        }
+     /*   match (
             min_button_push_counts_total,
             new_min_button_push_counts_total,
         ) {
@@ -280,7 +293,7 @@ fn get_button_push_counts_total_inner(
                 min_button_push_counts_total = Some(new_min);
             }
             _ => {}
-        }
+        } */
     }
     min_button_push_counts_total
 }
@@ -304,8 +317,6 @@ fn total_steps_to_desired_joltages(machines: &[Machine]) -> u64 {
         println!("machine: {:?}", machine);
         let steps = steps_to_desired_joltages(machine);
         println!("steps: {}", steps);
-        println!("EARLY EXIT");
-        std::process::exit(1);
         total_steps += steps;
     }
     total_steps
